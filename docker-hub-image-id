@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+DISPLAY_FULL=0
+
+function show_usage() {
+    echo "$0 [--full] NAME TAG"
+}
+
+while [ "$#" -gt "0" ]; do
+    case "$1" in
+        --full) DISPLAY_FULL=1 ; shift 1 ;;
+        *) REPOSITORY=$1 ; TAG=$2 ; shift 2 ;;
+    esac
+done
+
+if [ -z "$REPOSITORY" ] || [ -z "TAG" ]; then
+    show_usage
+    exit 2
+fi
+
+set -u
+
+
+AUTH_RESPONSE=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$REPOSITORY:pull")
+TOKEN=$(python -c "import json; print(json.loads('$AUTH_RESPONSE')['token'])")
+
+MANIFEST=$(curl -s -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.docker.distribution.manifest.v2+json" https://index.docker.io/v2/$REPOSITORY/manifests/$TAG)
+
+IMAGE_ID=$(python << EOF
+
+import json
+manifest = json.loads("""$MANIFEST""")
+digest = manifest['config']['digest']  # format: sha256:<HASH>
+print(digest.split(':')[1])
+
+EOF
+)
+
+if [ "$DISPLAY_FULL" == "1" ]; then
+    echo $IMAGE_ID
+else
+    echo ${IMAGE_ID:0:12}
+fi
