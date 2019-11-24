@@ -1,45 +1,153 @@
 #!/usr/bin/env bash
 
-set -eo pipefail
+set -euo pipefail
 
-DISPLAY_FULL=0
+function echo_err() {
+    local msg=$1
+    echo "ERROR: $1" 1>&2
+}
+
+DEFAULT_JSON_PARSER=jq
+JSON_PARSER=
+
+JQ_BIN=$(which jq || true)
+PYTHON_BIN=$(which python || true)
+CURL_BIN=$(which curl || true)
+
+if [ -z "$CURL_BIN" ]; then
+    echo_err "curl not found"
+    exit 2
+fi
+
+function select_json_parser() {
+    if [ -z "$JQ_BIN" ] && [ -z "$PYTHON_BIN" ]; then
+        echo_err "No JSON parser found"
+        exit 3
+    fi
+
+    case "$DEFAULT_JSON_PARSER" in
+        jq)
+            if [ -n "$JQ_BIN" ]; then
+                JSON_PARSER=jq
+            else
+                JSON_PARSER=python
+            fi
+            ;;
+        python)
+            if [ -n "$PYTHON_BIN" ]; then
+                JSON_PARSER=python
+            else
+                JSON_PARSER=jq
+            fi
+            ;;
+        *)
+            echo_err "Invalid default JSON parser" 1>&2
+            ;;
+    esac
+}
+
+function get_token() {
+    local repository=$1
+    local auth_response=$(curl -sSLf "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull")
+
+    if [ -z "$auth_response" ]; then
+        exit 5
+    fi
+
+    if [ "$JSON_PARSER" == "python" ]; then
+        local token=$(python -c "import json; print(json.loads('$auth_response')['token'])")
+    else
+        local token=$(echo "$auth_response" | jq -r '.token')
+    fi
+
+    if [ -z "$token" ] || [ "$token" == "null" ]; then
+        echo_err "Token not found" 1>&2
+        exit 7
+    fi
+
+    echo $token
+}
+
+function get_image_id {
+    local token=$1
+    local repository=$2
+    local tag=$3
+
+    local manifest=$(curl -sSLf \
+                    -H "Authorization: Bearer ${token}" \
+                    -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+                    https://index.docker.io/v2/${repository}/manifests/${tag})
+
+    if [ -z "$manifest" ]; then
+        exit 6
+    fi
+
+    # format: `sha256:<HASH>`
+    if [ "$JSON_PARSER" == "python" ]; then
+        local image_id=$(python << EOF
+import json
+manifest = json.loads("""$manifest""")
+digest = manifest['config']['digest']
+print(digest.split(':')[1])
+EOF
+                 )
+    else
+        local image_id=$(echo $manifest | jq -r '.config.digest' | cut -d':' -f2)
+    fi
+
+    if [ -z "$image_id" ] || [ "$image_id" == "null" ]; then
+        echo_err "Image id not found"
+        exit 8
+    fi
+
+    echo $image_id
+}
+
+function fix_library_repository() {
+    local repository=$1
+    if [ "$(echo "$repository" | grep --count '/')" == "0" ]; then
+        repository="library/$repository"
+    fi
+    echo $repository
+}
+
+
+function print_hash() {
+    local full=$1
+
+    if [ "$full" == "1" ]; then
+        echo $IMAGE_ID
+    else
+        echo ${IMAGE_ID:0:12}
+    fi
+}
 
 function show_usage() {
-    echo "$0 [--full] NAME TAG"
+    echo "$0 [--full] NAME TAG" 1>&2
 }
+
+
+# Parse args
+DISPLAY_FULL_HASH=0
 
 while [ "$#" -gt "0" ]; do
     case "$1" in
-        --full) DISPLAY_FULL=1 ; shift 1 ;;
+        --full) DISPLAY_FULL_HASH=1 ; shift 1 ;;
         *) REPOSITORY=$1 ; TAG=$2 ; shift 2 ;;
-    esac
+     esac
 done
 
 if [ -z "$REPOSITORY" ] || [ -z "TAG" ]; then
     show_usage
-    exit 2
+    exit 4
 fi
 
-set -u
 
+## Main
+select_json_parser
 
-AUTH_RESPONSE=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:$REPOSITORY:pull")
-TOKEN=$(python -c "import json; print(json.loads('$AUTH_RESPONSE')['token'])")
+REPOSITORY=$(fix_library_repository $REPOSITORY)
+TOKEN=$(get_token $REPOSITORY)
+IMAGE_ID=$(get_image_id $TOKEN $REPOSITORY $TAG)
 
-MANIFEST=$(curl -s -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.docker.distribution.manifest.v2+json" https://index.docker.io/v2/$REPOSITORY/manifests/$TAG)
-
-IMAGE_ID=$(python << EOF
-
-import json
-manifest = json.loads("""$MANIFEST""")
-digest = manifest['config']['digest']  # format: sha256:<HASH>
-print(digest.split(':')[1])
-
-EOF
-)
-
-if [ "$DISPLAY_FULL" == "1" ]; then
-    echo $IMAGE_ID
-else
-    echo ${IMAGE_ID:0:12}
-fi
+print_hash $DISPLAY_FULL_HASH
