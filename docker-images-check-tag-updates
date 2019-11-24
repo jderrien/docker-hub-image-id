@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+SCRIPT_DIR=$(dirname $0)
+HUB_BASE_URL=https://hub.docker.com
+
+for image in $(docker images --format="{{.Repository}}:{{.Tag}}:{{.ID}}" --filter 'dangling=false'); do
+    repository="$(echo $image | cut -d':' -f1)"
+    tag="$(echo $image | cut -d':' -f2)"
+    local_image_id="$(echo $image | cut -d':' -f3)"
+
+    hub_image_id=$(${SCRIPT_DIR}/docker-hub-image-id $repository $tag)
+
+    if [ "$local_image_id" == "$hub_image_id" ]; then
+        result="\033[0;32m✓\033[0m"
+    else
+        result="\033[0;31m✕\033[0m"
+    fi
+
+    if [ "$(echo "$repository" | grep --count '/')" == "0" ]; then
+        url_path_prefix="_"
+    else
+        url_path_prefix="r"
+    fi
+
+    echo -e "$result $repository:$tag | local: $local_image_id | hub: $hub_image_id ($HUB_BASE_URL/$url_path_prefix/$repository)"
+done
