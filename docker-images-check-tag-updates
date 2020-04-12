@@ -1,14 +1,37 @@
 #!/usr/bin/env bash
 
+[ "$DEBUG" == "1" ] && set -x
+set -eu -o pipefail -o posix
+
+function show_usage {
+    echo "Usage:"
+    echo ""
+    echo "    $0 [PATTERN [PATTERN]...]"
+    echo ""
+    echo "    PATTERN: Pattern compatible with the \`--filter=reference=<PATTERN>\` option from \`docker images\`"
+    echo "             See https://docs.docker.com/engine/reference/commandline/images/#filtering"
+    echo ""
+}
+
 SCRIPT_DIR=$(dirname $0)
 HUB_BASE_URL=https://hub.docker.com
+PATTERN=
 
-for image in $(docker images --format="{{.Repository}}:{{.Tag}}:{{.ID}}" --filter 'dangling=false'); do
+while [ "$#" -gt "0" ]; do
+    case "$1" in
+        -h|--help) show_usage ; exit ;;
+        *) PATTERN="$PATTERN --filter=reference=$1" ; shift ;;
+     esac
+done
+
+for image in $(docker images --format="{{.Repository}}:{{.Tag}}:{{.ID}}" --filter 'dangling=false' $PATTERN); do
     repository="$(echo $image | cut -d':' -f1)"
     tag="$(echo $image | cut -d':' -f2)"
     local_image_id="$(echo $image | cut -d':' -f3)"
 
+    set +e
     hub_image_id=$(${SCRIPT_DIR}/docker-hub-image-id $repository $tag)
+    set -e
 
     if [ "$local_image_id" == "$hub_image_id" ]; then
         result="\033[0;32m✓\033[0m"

@@ -1,13 +1,35 @@
-For some reasons, Docker Hub doesn't the IMAGE ID of an image.
+For some reasons, Docker Hub doesn't show the IMAGE ID of an image.
 
-These tools help to find the IMAGE ID of a specific TAG on Docker Hub. Convenient to know if you have the same version locally or if you should consider to upgrade.
+These tools help to find the IMAGE ID of a specific TAG on Docker Hub. Convenient to know if you have the same version locally or if you should consider upgrading.
 
-Example:
+Usage:
+```
+$ ./docker-images-check-tag-updates -h
+Usage:
+
+    ./docker-images-check-tag-updates [PATTERN [PATTERN]...]
+
+    PATTERN: Pattern compatible with the `--filter=reference=<PATTERN>` option from `docker images`
+             See https://docs.docker.com/engine/reference/commandline/images/#filtering
+
+```
+
+Examples:
 ```
 $ ./docker-images-check-tag-updates
 ✓ puckel/docker-airflow:1.10.6-1 | local: f98ecb2f13d2 | hub: f98ecb2f13d2 (https://hub.docker.com/r/puckel/docker-airflow)
 ✕ python:3.6-slim-stretch | local: 60ebf45b20e2 | hub: fa7acd99a1d8 (https://hub.docker.com/_/python)
 ✕ ubuntu:bionic | local: 775349758637 | hub: 4e5021d210f6 (https://hub.docker.com/_/ubuntu)
+
+$ ./docker-images-check-tag-updates python
+✕ python:3.6-slim-stretch | local: 60ebf45b20e2 | hub: fa7acd99a1d8 (https://hub.docker.com/_/python)
+
+$ ./docker-images-check-tag-updates */*airflow
+✓ puckel/docker-airflow:1.10.6-1 | local: f98ecb2f13d2 | hub: f98ecb2f13d2 (https://hub.docker.com/r/puckel/docker-airflow)
+
+$ ./docker-images-check-tag-updates */docker* python*
+✓ puckel/docker-airflow:1.10.6-1 | local: f98ecb2f13d2 | hub: f98ecb2f13d2 (https://hub.docker.com/r/puckel/docker-airflow)
+✕ python:3.6-slim-stretch | local: 60ebf45b20e2 | hub: fa7acd99a1d8 (https://hub.docker.com/_/python)
 ```
 
 `docker-hub-image-id` can be used directly as follow:
@@ -28,4 +50,4 @@ Requirements:
 
 Optional env variables:
 - `JSON_PARSER=<path>` (where `<path>` is the path to a `python` or `jq` executable)
-- `DEBUG=1` to enable debug mode
+- `DEBUG=1`
