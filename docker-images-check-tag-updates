@@ -22,5 +22,11 @@ for image in $(docker images --format="{{.Repository}}:{{.Tag}}:{{.ID}}" --filte
         url_path_prefix="r"
     fi
 
-    echo -e "$result $repository:$tag | local: $local_image_id | hub: $hub_image_id ($HUB_BASE_URL/$url_path_prefix/$repository)"
+    hub_url="$HUB_BASE_URL/$url_path_prefix/$repository"
+
+    if [ -z "$hub_image_id" ]; then
+        echo -e "$result Error while checking $repository:$tag ($hub_url) | local: ($local_image_id)"
+    else
+        echo -e "$result $repository:$tag | local: $local_image_id | hub: $hub_image_id ($hub_url)"
+    fi
 done

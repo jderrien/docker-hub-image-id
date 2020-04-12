@@ -1,67 +1,39 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+[ "$DEBUG" == "1" ] && set -x
+set -eu -o pipefail -o posix
+export SHELLOPTS
 
-function echo_err() {
+function echo_err {
     local msg=$1
     echo "ERROR: $1" 1>&2
 }
 
-DEFAULT_JSON_PARSER=jq
-JSON_PARSER=
+which curl > /dev/null || { echo_err "curl command not found"; exit 2; }
 
-JQ_BIN=$(which jq || true)
-PYTHON_BIN=$(which python || true)
-CURL_BIN=$(which curl || true)
+: ${JSON_PARSER:=$(which jq)}
+: ${JSON_PARSER:=$(which python)}
 
-if [ -z "$CURL_BIN" ]; then
-    echo_err "curl not found"
-    exit 2
+if [ -z "$JSON_PARSER" ]; then
+    echo "No JSON parser found"
+    exit 3
 fi
 
-function select_json_parser() {
-    if [ -z "$JQ_BIN" ] && [ -z "$PYTHON_BIN" ]; then
-        echo_err "No JSON parser found"
-        exit 3
-    fi
-
-    case "$DEFAULT_JSON_PARSER" in
-        jq)
-            if [ -n "$JQ_BIN" ]; then
-                JSON_PARSER=jq
-            else
-                JSON_PARSER=python
-            fi
-            ;;
-        python)
-            if [ -n "$PYTHON_BIN" ]; then
-                JSON_PARSER=python
-            else
-                JSON_PARSER=jq
-            fi
-            ;;
-        *)
-            echo_err "Invalid default JSON parser" 1>&2
-            ;;
-    esac
-}
-
-function get_token() {
+function get_token {
     local repository=$1
-    local auth_response=$(curl -sSLf "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull")
+    local auth_response
+    local token
 
-    if [ -z "$auth_response" ]; then
-        exit 5
-    fi
+    auth_response=$(curl -sSLf "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repository}:pull")
 
-    if [ "$JSON_PARSER" == "python" ]; then
-        local token=$(python -c "import json; print(json.loads('$auth_response')['token'])")
+    if [[ "$JSON_PARSER" =~ "python" ]]; then
+        token=$($JSON_PARSER -c "import json; print(json.loads('''$auth_response''')['token'])")
     else
-        local token=$(echo "$auth_response" | jq -r '.token')
+        token=$(echo "$auth_response" | $JSON_PARSER -r '.token')
     fi
 
     if [ -z "$token" ] || [ "$token" == "null" ]; then
-        echo_err "Token not found" 1>&2
+        echo_err "Token not found"
         exit 7
     fi
 
@@ -72,27 +44,25 @@ function get_image_id {
     local token=$1
     local repository=$2
     local tag=$3
+    local manifest
+    local image_id
 
-    local manifest=$(curl -sSLf \
+    manifest=$(curl -sSLf \
                     -H "Authorization: Bearer ${token}" \
                     -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-                    https://index.docker.io/v2/${repository}/manifests/${tag})
-
-    if [ -z "$manifest" ]; then
-        exit 6
-    fi
+                    "https://index.docker.io/v2/${repository}/manifests/${tag}")
 
     # format: `sha256:<HASH>`
-    if [ "$JSON_PARSER" == "python" ]; then
-        local image_id=$(python << EOF
+    if [[ "$JSON_PARSER" =~ "python" ]]; then
+        image_id=$($JSON_PARSER << EOF
 import json
-manifest = json.loads("""$manifest""")
+manifest = json.loads('''$manifest''')
 digest = manifest['config']['digest']
 print(digest.split(':')[1])
 EOF
                  )
     else
-        local image_id=$(echo $manifest | jq -r '.config.digest' | cut -d':' -f2)
+        image_id=$(echo $manifest | $JSON_PARSER -r '.config.digest' | cut -d':' -f2)
     fi
 
     if [ -z "$image_id" ] || [ "$image_id" == "null" ]; then
@@ -103,7 +73,7 @@ EOF
     echo $image_id
 }
 
-function fix_library_repository() {
+function fix_library_repository {
     local repository=$1
     if [ "$(echo "$repository" | grep --count '/')" == "0" ]; then
         repository="library/$repository"
@@ -112,7 +82,7 @@ function fix_library_repository() {
 }
 
 
-function print_hash() {
+function print_hash {
     local full=$1
 
     if [ "$full" == "1" ]; then
@@ -122,8 +92,8 @@ function print_hash() {
     fi
 }
 
-function show_usage() {
-    echo "$0 [--full] NAME TAG" 1>&2
+function show_usage {
+    echo "Usage: $0 [--full] NAME TAG" 1>&2
 }
 
 
@@ -132,8 +102,14 @@ DISPLAY_FULL_HASH=0
 
 while [ "$#" -gt "0" ]; do
     case "$1" in
+        -h|--help) show_usage ; exit ;;
         --full) DISPLAY_FULL_HASH=1 ; shift 1 ;;
-        *) REPOSITORY=$1 ; TAG=$2 ; shift 2 ;;
+        *)
+            [ "$#" -ne "2" ] && show_usage && exit 9
+            REPOSITORY=$1
+            TAG=$2
+            shift 2
+            ;;
      esac
 done
 
@@ -144,7 +120,6 @@ fi
 
 
 ## Main
-select_json_parser
 
 REPOSITORY=$(fix_library_repository $REPOSITORY)
 TOKEN=$(get_token $REPOSITORY)
